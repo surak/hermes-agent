@@ -10,8 +10,8 @@ from urllib.parse import urlparse
 
 from agent.lmstudio_reasoning import resolve_lmstudio_effort
 from agent.reasoning_effort import (
-    KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES, OPENAI_COMPAT_WIRE_EFFORTS, TOKENHUB_EFFORTS, clamp_effort,
-    clamp_reasoning_config, kimi_supported_efforts, requested_effort,
+    KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES, TOKENHUB_EFFORTS, clamp_effort,
+    clamp_reasoning_config, kimi_supported_efforts, requested_effort, wire_efforts_for_model,
 )
 from agent.message_sanitization import normalize_finish_reason as _normalize_finish_reason
 from agent.moonshot_schema import is_moonshot_model, sanitize_moonshot_tools
@@ -150,15 +150,22 @@ def is_router_timeout_shim(response: Any) -> bool:
 
 
 def _reasoning_config_for_model(model: str, reasoning_config: dict | None) -> dict | None:
-    """Clamp Hermes' extended effort set (``ultra``) to the OpenAI-compat wire vocabulary.
+    """Clamp Hermes' extended effort set (``ultra``) to the wire vocabulary the ROUTE accepts.
 
     Hermes' internal effort set extends the wire vocabulary with ``ultra`` (the /reasoning command documents
     none..xhigh|max|ultra). OpenAI- compatible wires — OpenRouter chief among them — accept exactly
     max|xhigh|high|medium|low|minimal|none and reject the extension with HTTP 400 (#89503). Clamp against
     the declared wire vocabulary via the shared policy in ``agent.reasoning_effort``; provider profiles with
     narrower sets clamp again downstream.
+
+    The ladder is keyed on the MODEL, not the provider: a custom relay fronting Kimi K3 (PTJ maps
+    ``reasoning_effort`` onto Kimi's ``thinking_effort`` knob, which accepts only low/high/max) 400s on
+    ``xhigh`` regardless of hostname. K2-era Kimi slugs share the generic wire's entries, so only K3's
+    ladder changes the outcome; the vendor's K3 mapping keeps a stronger ask at the top tier
+    (``xhigh``→``max``) instead of demoting it to ``high``.
     """
-    return clamp_reasoning_config(reasoning_config, OPENAI_COMPAT_WIRE_EFFORTS)
+    ladder, overrides = wire_efforts_for_model(model)
+    return clamp_reasoning_config(reasoning_config, ladder, overrides)
 
 
 def _build_gemini_thinking_config(model: str, reasoning_config: dict | None) -> dict | None:

@@ -6578,13 +6578,16 @@ def _build_call_kwargs(
         kwargs["tools"] = _dedupe_tool_names(tools, provider, model)
     # Provider profiles are the source of truth for reasoning wire shapes (top-level, nested body,
     # or extra_body.reasoning); providers without a reasoning-aware profile keep the generic
-    # ``extra_body.reasoning`` fallback. Clamp Hermes-internal levels (``ultra``) to the
-    # OpenAI-compat wire ONCE here, before either path sees the config — the same entry clamp the
-    # main transport applies (#89503); MoA aggregator/reference and aux calls 400'd without it (#112010).
-    from agent.reasoning_effort import clamp_reasoning_config
+    # ``extra_body.reasoning`` fallback. Clamp Hermes-internal levels (``ultra``) to the wire the
+    # ROUTE accepts ONCE here, before either path sees the config — model-aware for Kimi K3
+    # relays (low/high/max) — the same entry clamp the main transport applies (#89503); MoA
+    # aggregator/reference and aux calls 400'd without it (#112010).
+    from agent.reasoning_effort import clamp_reasoning_config, wire_efforts_for_model
     from agent.auxiliary_reasoning_floor import known_reasoning_floor
+    _ladder, _overrides = wire_efforts_for_model(model)
     reasoning_config = clamp_reasoning_config(
-        known_reasoning_floor(reasoning_config, provider_norm, effective_base, model, task))
+        known_reasoning_floor(reasoning_config, provider_norm, effective_base, model, task),
+        _ladder, _overrides)
     projection = _project_provider_profile(provider, provider_norm, model, effective_base, reasoning_config)
     kwargs.update(projection.top_level)
     merged_extra = _merge_aux_extra_body(extra_body, projection, reasoning_config, provider_norm)

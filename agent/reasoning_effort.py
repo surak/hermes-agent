@@ -157,6 +157,24 @@ def route_supported_efforts(provider: Optional[str], model: Optional[str]) -> tu
     return OPENAI_COMPAT_WIRE_EFFORTS
 
 
+def wire_efforts_for_model(model: Optional[str]) -> tuple[tuple[str, ...], Optional[dict[str, str]]]:
+    """ENTRY-clamp ladder (+ vendor overrides) for a chat-completions wire, keyed on the MODEL,
+    not the provider name.
+
+    Custom OpenAI-compat relays fronting vendor models (PTJ's gateway maps ``reasoning_effort``
+    onto Kimi's ``thinking_effort`` knob) enforce the vendor's vocabulary whatever hostname the
+    client sees, so the widest OpenAI-compat set must not be assumed for a Kimi/Moonshot slug:
+    K3's low/high/max 400s on ``xhigh``. K2-era Kimi speaks low/medium/high — the same entries a
+    generic wire accepts — so only the K3 ladder changes the outcome. The vendor's K3 mapping is
+    returned alongside so ``xhigh``/``medium`` land on the intended tiers (``max``/``high``)
+    instead of the generic nearest-weaker demotion.
+    """
+    m = (model or "").strip().lower().split("/")[-1]
+    if _KIMI_K3_SLUG_RE.search(m):
+        return KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES
+    return OPENAI_COMPAT_WIRE_EFFORTS, None
+
+
 def effort_display_label(effort: Optional[str], provider: Optional[str] = None, model: Optional[str] = None) -> str:
     """Picker / ``/reasoning`` status label for a ladder level: the level itself when the route sends
     it verbatim, else ``"<level> (sends <clamped> on this route)"`` so a Hermes-internal step such as
@@ -174,18 +192,24 @@ def requested_effort(reasoning_config: Optional[dict]) -> Optional[str]:
     return str(reasoning_config.get("effort") or "").strip().lower() or None
 
 
-def clamp_reasoning_config(reasoning_config: Optional[dict], supported: Sequence[str] = OPENAI_COMPAT_WIRE_EFFORTS) -> Optional[dict]:
+def clamp_reasoning_config(
+    reasoning_config: Optional[dict],
+    supported: Sequence[str] = OPENAI_COMPAT_WIRE_EFFORTS,
+    overrides: Optional[dict[str, str]] = None,
+) -> Optional[dict]:
     """Return ``reasoning_config`` with its ``effort`` clamped onto ``supported`` (non-dicts and
     configs without an effort pass through untouched).
 
     The entry clamp for an OpenAI-compatible chat-completions request builder: Hermes-internal
     ``ultra`` never reaches a wire (#89503 main transport, #112010 aux/MoA), while provider
-    profiles with narrower vocabularies clamp again downstream. Unset stays unset.
+    profiles with narrower vocabularies clamp again downstream. ``overrides`` carries a vendor's
+    declared mapping (Kimi K3 ``xhigh → max``) so a stronger ask lands on the vendor's top tier
+    instead of the generic nearest-weaker demotion. Unset stays unset.
     """
     if not isinstance(reasoning_config, dict):
         return reasoning_config
     effort = str(reasoning_config.get("effort") or "").strip().lower()
-    clamped = clamp_effort(effort, supported) if effort else effort
+    clamped = clamp_effort(effort, supported, overrides) if effort else effort
     return {**reasoning_config, "effort": clamped} if clamped != effort else reasoning_config
 
 

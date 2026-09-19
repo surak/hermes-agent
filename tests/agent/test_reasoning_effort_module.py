@@ -25,8 +25,10 @@ from agent.reasoning_effort import (
     KIMI_K3_OVERRIDES,
     OPENAI_COMPAT_WIRE_EFFORTS,
     clamp_effort,
+    clamp_reasoning_config,
     kimi_supported_efforts,
     requested_effort,
+    wire_efforts_for_model,
 )
 from hermes_constants import VALID_REASONING_EFFORTS
 
@@ -124,6 +126,46 @@ class TestKimiVocabulary:
     )
     def test_k2_era_slugs(self, model):
         assert kimi_supported_efforts(model) is KIMI_K2_EFFORTS
+
+    @pytest.mark.parametrize(
+        "model",
+        ["k3", "Kimi-K3-1M", "kimi-k3-1m", "k3-256k", "moonshotai/kimi-k3"],
+    )
+    def test_wire_ladder_is_k3_with_vendor_overrides(self, model):
+        """The entry clamp must hand the K3 ladder AND the vendor's rounding
+        map together — otherwise ``xhigh`` demotes to ``high`` (nearest
+        weaker) instead of landing on K3's top tier."""
+        ladder, overrides = wire_efforts_for_model(model)
+        assert ladder is KIMI_K3_EFFORTS
+        assert overrides is KIMI_K3_OVERRIDES
+
+    @pytest.mark.parametrize(
+        "model",
+        ["kimi-k2.6", "deepseek/deepseek-v4", "some-internal-model", "m", None],
+    )
+    def test_wire_ladder_is_generic_openai_compat(self, model):
+        ladder, overrides = wire_efforts_for_model(model)
+        assert ladder is OPENAI_COMPAT_WIRE_EFFORTS
+        assert overrides is None
+
+
+class TestClampReasoningConfig:
+    def test_k3_override_lands_xhigh_on_max(self):
+        ladder, overrides = wire_efforts_for_model("kimi-k3-1m")
+        out = clamp_reasoning_config({"enabled": True, "effort": "xhigh"}, ladder, overrides)
+        assert out == {"enabled": True, "effort": "max"}
+
+    def test_generic_wire_keeps_xhigh(self):
+        ladder, overrides = wire_efforts_for_model("deepseek-v4")
+        cfg = {"enabled": True, "effort": "xhigh"}
+        assert clamp_reasoning_config(cfg, ladder, overrides) is cfg
+
+    def test_unsupported_set_passes_through(self):
+        # A relay publishing no ladder (unknown/bespoke names) is untouched.
+        assert clamp_reasoning_config({"enabled": True, "effort": "weird"}, (), None) == {
+            "enabled": True,
+            "effort": "weird",
+        }
 
 
 class TestGlm52Vocabulary:
